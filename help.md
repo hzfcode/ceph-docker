@@ -98,9 +98,6 @@ rbd cache max dirty object = 2 #默认值0              #最大的Object对象�
       #每个chunk对象抽象为一个Object；librbd中以Object为单位来管理缓存，增大该值可以提升性能
 rbd cache target dirty = 235544320 #默认值16777216    #开始执行回写过程的脏数据大小，不能超过 rbd_cache_max_dirty
 
-
-
-
 官方镜像
 curl -s -L https://quay.io/api/v1/repository/ceph/ceph/tag?page_size=100 | jq '."tags"[] .name'
 quay.io/ceph/daemon:latest-octopus
@@ -244,3 +241,6 @@ mkfs.xfs -f /dev/loop0
 挂载文件系统：
 mkdir  -p /usr/local/ceph/data/osd/
 mount /dev/loop0  /usr/local/ceph/data/osd/
+
+# pool type
+在请求大小越大的时候，erasure相对于replicated的写性能优势越发明显，当请求大小低于32KB时，erasure的写性能略低于replicated。
