@@ -21,6 +21,7 @@
   - [pool manager](#pool-manager)
   - [mount rbd](#mount-rbd)
   - [snap](#snap)
+  - [rbd copy](#rbd-copy)
   - [mount kvm](#mount-kvm)
   - [mount cephfs](#mount-cephfs)
   - [osd delete](#osd-delete)
@@ -57,6 +58,17 @@ docker run -d --net=host \
 -e MON_IP=192.168.0.251 \
 -e CEPH_PUBLIC_NETWORK=192.168.0.0/24 \
 ceph/daemon:latest mon
+
+# 解决rbd image挂载，OS kernel不支持块设备镜像一些特性的问题
+cat << EOF >> /etc/ceph/ceph.conf
+rbd_default_features = 1
+EOF
+
+# 默认值0.05s，monitor间的clock drift(时钟偏移)
+cat << EOF >> /etc/ceph/ceph.conf
+[mon]
+mon_clock_drift_allowed = 2
+EOF
 ```
 
 ## osd install
@@ -193,16 +205,17 @@ ceph osd pool rm rbd.hzf rbd.hzf --yes-i-really-really-mean-it
 
 ```shell
 ceph osd pool create rbd.vm 64
+# 设置副本数
 ceph osd pool set rbd.vm size 1
 ceph osd pool rm rbd.vm rbd.vm --yes-i-really-really-mean-it
 
 ceph osd pool application enable rbd.vm rbd --yes-i-really-mean-it
 rbd pool init rbd.vm
 
-rbd create --size 50G rbd.vm/sg-216.img
-rbd info rbd.vm/sg-216.img
-rbd resize -s 2G rbd.vm/sg-216.img
-rbd rm rbd.vm/sg-216.img
+rbd create --size 50G rbd.vm/sg-216
+rbd info rbd.vm/sg-216
+rbd resize -s 2G rbd.vm/sg-216
+rbd rm rbd.vm/sg-216
 
 cat <<EOF > /etc/ceph/ceph.conf
 [global]
@@ -218,11 +231,28 @@ cat  <<EOF > /etc/ceph/ceph.client.admin.keyring
         caps osd = "allow *"
 EOF
 
-rbd map rbd.vm/sg-216.img
-rbd feature disable rbd.vm/sg-216.img deep-flatten
-rbd feature disable rbd.vm/sg-216.img fast-diff
-rbd feature disable rbd.vm/sg-216.img object-map
-rbd feature disable rbd.vm/sg-216.img exclusive-lock
+rbd map rbd.vm/sg-216
+# map失败，禁用功能
+rbd feature disable rbd.vm/sg-216 deep-flatten
+rbd feature disable rbd.vm/sg-216 fast-diff
+rbd feature disable rbd.vm/sg-216 object-map
+rbd feature disable rbd.vm/sg-216 exclusive-lock
+rbd unmap /dev/rbd0
+
+# 自动map
+cat <<EOF >> /etc/ceph/rbdmap
+rbd.vm/sg-216 id=admin,keyring=/etc/ceph/ceph.client.admin.keyring
+rbd.vm/sg-215 id=admin,keyring=/etc/ceph/ceph.client.admin.keyring
+rbd.vm/sg-214 id=admin,keyring=/etc/ceph/ceph.client.admin.keyring
+EOF
+systemctl enable rbdmap.service
+
+# 开机挂载文件系统
+cat <<EOF >> /etc/fstab
+/dev/rbd0 /mnt/ceph-block-device ext4 defaults,noatime,_netdev 0 0
+EOF
+
+# 挂载文件系统
 fdisk -l
 mkfs.xfs /dev/rbd0
 mkdir /mnt/sg-216
@@ -232,8 +262,17 @@ mount /dev/rbd0 /mnt/sg-216
 ### snap
 
 ```bash
-rbd snap create rbd.vm/sg-216.img@sg-216.img-osInit-20220726
-rbd snap ls rbd.vm/sg-216.img
+rbd snap create rbd.vm/sg-216@sg-216-osInit-20220726
+rbd snap ls rbd.vm/sg-216
+rbd snap remove rbd.vm/sg-216@sg-216-osInit-20220726
+# 实测挂载rbd的kvm不关机，创建快照没问题，恢复的快照有问题
+rbd snap rollback rbd.vm/sg-216@sg-216-osInit-20220726
+```
+
+### rbd copy
+
+```bash
+rbd copy rbd.vm/sg-216@sg-216-osInit-20220726 rbd.vm/sg-215 --object-size=50G
 ```
 
 ### mount kvm
